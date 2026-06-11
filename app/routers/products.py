@@ -19,6 +19,7 @@ router = APIRouter(
 async def get_all_products(
         page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100),
+        search: str | None = Query(None, min_length=1, description='Поиск по названию товара'),
         category_id: int | None = Query(
             None, description='ID категории для фильтрации'
         ),
@@ -43,6 +44,10 @@ async def get_all_products(
             detail="min_price не может быть больше max_price",
         )
     filters = [Product.is_active == True]
+    if search is not None:
+        search_value = search.strip()
+        if search_value:
+            filters.append(func.lower(Product.name).like(f'%{search_value.lower()}%'))
     if category_id:
         filters.append(Product.category_id == category_id)
     if min_price is not None:
