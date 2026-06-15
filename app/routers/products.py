@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, update, func
+from sqlalchemy import select, update, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
@@ -17,38 +17,25 @@ router = APIRouter(
 
 @router.get("/", response_model=ProductList)
 async def get_all_products(
-        page: int = Query(1, ge=1),
-        page_size: int = Query(20, ge=1, le=100),
-        search: str | None = Query(None, min_length=1, description='Поиск по названию товара'),
-        category_id: int | None = Query(
-            None, description='ID категории для фильтрации'
-        ),
-        min_price: float | None = Query(
-            None, ge=0, description='Минимальная цена товара'
-        ),
-        max_price: float | None = Query(
-            None, ge=0, description='Максимальная цена товара'
-        ),
-        in_stock: bool | None = Query(
-            None, description="true — только товары в наличии, false — только без остатка"),
-        seller_id: int | None = Query(
-            None, description="ID продавца для фильтрации"),
-        db: AsyncSession = Depends(get_async_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    category_id: int | None = Query(None, description="ID категории для фильтрации"),
+    search: str | None = Query(None, min_length=1, description="Поиск по названию/описанию"),
+    min_price: float | None = Query(None, ge=0, description="Минимальная цена товара"),
+    max_price: float | None = Query(None, ge=0, description="Максимальная цена товара"),
+    in_stock: bool | None = Query(None, description="true — только товары в наличии, false — только без остатка"),
+    seller_id: int | None = Query(None, description="ID продавца для фильтрации"),
+    db: AsyncSession = Depends(get_async_db),
 ):
-    """
-    Возвращает список всех товаров.
-    """
     if min_price is not None and max_price is not None and min_price > max_price:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="min_price не может быть больше max_price",
         )
-    filters = [Product.is_active == True]
-    if search is not None:
-        search_value = search.strip()
-        if search_value:
-            filters.append(func.lower(Product.name).like(f'%{search_value.lower()}%'))
-    if category_id:
+
+    filters = [Product.is_active.is_(True)]
+
+    if category_id is not None:
         filters.append(Product.category_id == category_id)
     if min_price is not None:
         filters.append(Product.price >= min_price)
@@ -60,16 +47,39 @@ async def get_all_products(
         filters.append(Product.seller_id == seller_id)
 
     total_stmt = select(func.count()).select_from(Product).where(*filters)
+
+    rank_col = None
+    if search:
+        search_value = search.strip()
+        if search_value:
+            ts_query = func.websearch_to_tsquery('english', search_value)
+            filters.append(Product.tsv.op('@@')(ts_query))
+            rank_col = func.ts_rank_cd(Product.tsv, ts_query).label("rank")
+            total_stmt = select(func.count()).select_from(Product).where(*filters)
+
     total = await db.scalar(total_stmt) or 0
 
-    products_stmt = (
-        select(Product)
-        .where(*filters)
-        .order_by(Product.id)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
-    items = (await db.scalars((products_stmt))).all()
+    if rank_col is not None:
+        products_stmt = (
+            select(Product, rank_col)
+            .where(*filters)
+            .order_by(desc(rank_col), Product.id)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        result = await db.execute(products_stmt)
+        rows = result.all()
+        items = [row[0] for row in rows]    # сами объекты
+    else:
+        products_stmt = (
+            select(Product)
+            .where(*filters)
+            .order_by(Product.id)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        items = (await db.scalars(products_stmt)).all()
+
     return {
         "items": items,
         "total": total,
