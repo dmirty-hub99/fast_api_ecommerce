@@ -24,6 +24,9 @@ class Product(Base):
     seller_id: Mapped[int] = mapped_column(ForeignKey('users.id'), nullable=False)
     seller: Mapped['User'] = relationship('User', back_populates='products')
     reviews: Mapped[list['Review']] = relationship('Review', back_populates='product')
+    cart_items: Mapped[list['CartItem']] = relationship(
+        'CartItem', back_populates='product', cascade='all, delete-orphan'
+    )
 
     tsv: Mapped[TSVECTOR] = mapped_column(
         TSVECTOR,
