@@ -70,7 +70,7 @@ async def add_item_to_cart(
     return updated_item
 
 
-@router.put('/items/{product_id}', response_model=CartSchema)
+@router.put('/items/{product_id}', response_model=CartItemSchema)
 async def update_cart_item(
         product_id: int,
         payload: CartItemUpdate,
