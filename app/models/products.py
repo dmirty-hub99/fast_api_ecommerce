@@ -27,6 +27,7 @@ class Product(Base):
     cart_items: Mapped[list['CartItem']] = relationship(
         'CartItem', back_populates='product', cascade='all, delete-orphan'
     )
+    order_items: Mapped[list["OrderItem"]] = relationship("OrderItem", back_populates="product")
 
     tsv: Mapped[TSVECTOR] = mapped_column(
         TSVECTOR,
